@@ -7,7 +7,8 @@
 // function to convert decimal to binary 
 void decToBinary(int num, int binValue[]) 
 {
-    for (int j = 0; j < INPUTS; j++)
+    int j = 0;
+    for (j = 0; j < INPUTS; j++)
     {
         if ( num > 0 )
         {
@@ -52,7 +53,8 @@ int main(int argc, char *argv[])
     //each input has binary value, there are N inputs
     int combinations = pow(2, INPUTS) - 1;
     int results[combinations];
-    
+    int i = 0;
+    int j = 0;
     int binValue[INPUTS];
 
     //open file output.txt in write mode 
@@ -64,19 +66,21 @@ int main(int argc, char *argv[])
     }
 
     clock_t begin = clock();
-    for (int i = 0; i <= combinations; i++)
+    for (i = 0; i <= combinations; i++)
     {
         
         decToBinary(i,binValue);
         results[i] = validateCircuit(binValue);
         if (results[i] == 1)
         {
-            for (int j = 0; j < INPUTS; j++)
+            for (j = 0; j < INPUTS; j++)
                 fprintf(fptr, "%d", binValue[j]);
             fprintf(fptr,"\n");
         }
     }
     clock_t end = clock();
+    
+    fclose("circuitoutput.txt");
     // calculate elapsed time by finding difference (end - begin)
     printf("Time elpased is %.4f seconds", (double)(end - begin) / CLOCKS_PER_SEC);
 
