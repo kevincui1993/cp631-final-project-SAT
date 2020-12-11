@@ -75,9 +75,9 @@ void isCircuitSatisfied(int rank, int p, int combinations)
         printf("Could not open file"); 
         return; 
     }
-
-    for ( ; localStart <= MIN(localStart + blockLen, combinations); localStart++) {
-        decToBinary(localStart,binValue);
+    int k;
+    for (k = localStart ; k <= MIN(localStart + blockLen, combinations); k++) {
+        decToBinary(k,binValue);
         if (validateCircuit(binValue) == 1) {
             for (j = 0; j < INPUTS; j++)
                 fprintf(fptr, "%d", binValue[j]);
