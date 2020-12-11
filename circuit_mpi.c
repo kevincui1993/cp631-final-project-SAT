@@ -1,3 +1,9 @@
+/*
+mpicc -O2 circuit_mpi.c -o circuit_mpi.x
+mpirun -np 4 ./circuit_mpi.x 1 (with early exit)
+mpirun -np 4 ./circuit_mpi.x 0 (without early exit)
+*/
+
 #include <stdio.h>
 #include <math.h>
 #include <time.h> 
@@ -45,7 +51,7 @@ int validateCircuit(int binValue[]) {
     return result;
 }
 
-void isCircuitSatisfied(int rank, int p, int combinations)
+void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit)
 {
     int blockLen = combinations / p + 1;
     int i = blockLen;
@@ -84,15 +90,28 @@ void isCircuitSatisfied(int rank, int p, int combinations)
             fprintf(fptr, "\n");
             isSatisfied = 1;
         }
+
+        if (earlyExit != 0 && ((k-localStart + 1) % 100 == 0 || k == MIN(localStart + blockLen, combinations))) {
+            //check if we found valid inputs, if so exit early
+            MPI_Allreduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            if (finalResult != 0) {
+                if (rank == 0) { 
+                    printf("Found a solution, performing early exit\n");
+                }
+                break;
+            }
+        }
     }
     fclose(fptr);
-    MPI_Reduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    if (earlyExit == 0) {
+        MPI_Reduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    }
     if (rank == 0) {
         printf("Circuit Satisfied: %s\n", finalResult != 0 ? "Yes" : "No");
     }
 }
 
-void combineOutputFiles(rank, p) {
+void combineOutputFiles(int rank, int p) {
     int i = 0;
     char c;
     if (rank == 0) {
@@ -127,6 +146,12 @@ int main(int argc, char *argv[])
     int m_rank;
     int p;
 
+    if (argc < 2) {
+        printf("Abort: missing early exit flag!\n");
+        return 1;
+    }
+    int earlyExit = atoi(argv[1]);
+
     /* Start up MPI */
     MPI_Init(&argc, &argv);
 
@@ -138,7 +163,7 @@ int main(int argc, char *argv[])
 
     clock_t begin = clock();
 
-    isCircuitSatisfied(m_rank, p, combinations);
+    isCircuitSatisfied(m_rank, p, combinations, earlyExit);
 
     clock_t end = clock();
     
