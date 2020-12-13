@@ -58,7 +58,6 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit)
     int j = 0;
     int dest = 1;
     int localStart = 0;
-    int binValue[INPUTS];
     int isSatisfied = 0;
     int finalResult = 0;
 
@@ -81,24 +80,34 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit)
         printf("Could not open file"); 
         return; 
     }
+    
     int k;
+    #pragma omp for private(k, j)
     for (k = localStart ; k <= MIN(localStart + blockLen, combinations); k++) {
+        
+        int binValue[INPUTS];
         decToBinary(k,binValue);
         if (validateCircuit(binValue) == 1) {
-            for (j = 0; j < INPUTS; j++)
-                fprintf(fptr, "%d", binValue[j]);
-            fprintf(fptr, "\n");
-            isSatisfied = 1;
+            #pragma omp critical
+            {
+                for (j = 0; j < INPUTS; j++)
+                    fprintf(fptr, "%d", binValue[j]);
+                fprintf(fptr, "\n");
+                isSatisfied = 1;
+            }
         }
 
-        if (earlyExit != 0 && ((k-localStart + 1) % 100 == 0 || k == MIN(localStart + blockLen, combinations))) {
-            //check if we found valid inputs, if so exit early
-            MPI_Allreduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-            if (finalResult != 0) {
-                if (rank == 0) { 
-                    printf("Found a solution, performing early exit\n");
+        #pragma omp critical
+        {
+            if (finalResult == 0 && earlyExit != 0 && ((k-localStart + 1) % 100 == 0 || k == MIN(localStart + blockLen, combinations))) {
+                //check if we found valid inputs, if so exit early
+                MPI_Allreduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+                if (finalResult != 0) {
+                    if (rank == 0) { 
+                        printf("Found a solution, performing early exit\n");
+                    }
+                    #pragma omp cancel for
                 }
-                break;
             }
         }
     }
@@ -150,7 +159,7 @@ int main(int argc, char *argv[])
     if (argc == 2) {
         earlyExit = atoi(argv[1]);
     }
-    
+
     /* Start up MPI */
     MPI_Init(&argc, &argv);
 
