@@ -9,10 +9,11 @@ mpirun -np 4 ./circuit_mpi.x 0 (without early exit)
 #include <time.h> 
 #include "mpi.h"
 #include <string.h>
+#include "logicalExpressionReader.h"
 
-#define INPUTS 15
 #define MIN(a,b) (((a)<(b))?(a):(b))
 
+int INPUTS = 0;
 // function to convert decimal to binary 
 void decToBinary(int num, int binValue[]) {
     int j = 0;
@@ -27,31 +28,11 @@ void decToBinary(int num, int binValue[]) {
     }
 }
 
-int validateCircuit(int binValue[]) {
-    int result = 0;
-
-    int A = binValue[0];
-    int B = binValue[1];
-    int C = binValue[2];
-    int D = binValue[3];
-    int E = binValue[4];
-    int F = binValue[5];
-    int G = binValue[6];
-    int H = binValue[7];
-    int I = binValue[8];
-    int J = binValue[9];
-    int K = binValue[10];
-    int L = binValue[11];
-    int M = binValue[12];
-    int N = binValue[13];
-    int O = binValue[14];
-
-    result = (((G && H) && !I) && ((((A || B) && !C) || ((B && C) || ((D || E) && F))) && ((((L || M) && N) || (J && K)) && !O)));
-
-    return result;
+int validateCircuit(int binValue[],char* expression, int expressionLength) {
+    return evaluateExpression(expression, 0 , expressionLength, binValue, INPUTS);
 }
 
-void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit)
+void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* expression, int expressionLength)
 {
     int blockLen = combinations / p + 1;
     int i = blockLen;
@@ -80,14 +61,13 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit)
         printf("Could not open file"); 
         return; 
     }
-    
     int k;
     #pragma omp for private(k, j)
     for (k = localStart ; k <= MIN(localStart + blockLen, combinations); k++) {
         
         int binValue[INPUTS];
         decToBinary(k,binValue);
-        if (validateCircuit(binValue) == 1) {
+        if (validateCircuit(binValue, expression, expressionLength) == 1) {
             #pragma omp critical
             {
                 for (j = 0; j < INPUTS; j++)
@@ -151,15 +131,21 @@ void combineOutputFiles(int rank, int p) {
 int main(int argc, char *argv[])
 {
     //each input has binary value, there are N inputs
-    int combinations = pow(2, INPUTS) - 1;
+    int combinations = 0;
     int m_rank;
     int p;
     int earlyExit = 0;
+    int expressionLength;
+    int bufferLength = 300;
+    char buffer[bufferLength];
 
-    if (argc == 2) {
-        earlyExit = atoi(argv[1]);
+    if(argc != 3){
+        printf("This program requires inputs\nThe first is either a 0 or 1 flag that triggers single output mode\n");
+        printf("The second is the filename of the text file containing the circuit that will be evaluated\n");
+        return 0;
     }
 
+    earlyExit = atoi(argv[1]);
     /* Start up MPI */
     MPI_Init(&argc, &argv);
 
@@ -169,9 +155,33 @@ int main(int argc, char *argv[])
     /* Find out number of processes */
     MPI_Comm_size(MPI_COMM_WORLD, &p);
 
+    if (m_rank == 0) {
+        FILE *circuitFile = fopen(argv[2], "r"); 
+
+        if(circuitFile == NULL){
+            printf("please input a valid text file\n");
+            return 0;
+        }
+        //Get the first line from the input
+        fgets(buffer, bufferLength, circuitFile);
+        //The first line will be a number
+        INPUTS = atoi(buffer);
+        //calculate the number of possible inputs
+        combinations = pow(2, INPUTS) - 1;
+
+        //The second line contains the circuit expression
+        fgets(buffer, bufferLength, circuitFile);
+        expressionLength = strlen(buffer);
+        fclose(circuitFile);
+    }
+    MPI_Bcast(&INPUTS, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&combinations, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&expressionLength, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&buffer, expressionLength, MPI_CHAR, 0, MPI_COMM_WORLD);
+
     clock_t begin = clock();
 
-    isCircuitSatisfied(m_rank, p, combinations, earlyExit);
+    isCircuitSatisfied(m_rank, p, combinations, earlyExit, buffer, expressionLength);
 
     clock_t end = clock();
     
