@@ -1,7 +1,7 @@
 /*
-mpicc -O2 circuit_mpi.c -o circuit_mpi.x
-mpirun -np 4 ./circuit_mpi.x 1 (with early exit)
-mpirun -np 4 ./circuit_mpi.x 0 (without early exit)
+mpicc -fopenmp -lm -O2 circuit_mpi_openmp.c logicalExpressionReader.c
+OMP_NUM_THREADS=10 mpirun -np 50 ./a.out 1 inputFile (with early exit)
+OMP_NUM_THREADS=10 mpirun -np 50 ./a.out 0 inputFile (without early exit)
 */
 
 #include <stdio.h>
@@ -43,6 +43,7 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
     int finalResult = 0;
 
     if (rank == 0) {
+        // process 0 distributes a offset to each process so they can work on their own interval
         for (dest = 1; dest < p; dest++) {
             MPI_Request req;
             MPI_Isend(&i, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, &req);
@@ -61,6 +62,8 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
         printf("Could not open file"); 
         return; 
     }
+    // each process work on their own interval and also make sure they stay in the bound
+    // we are also running OpenMP so each threads get their own k/j to prevent race condition
     int k;
     #pragma omp for private(k, j)
     for (k = localStart ; k <= MIN(localStart + blockLen, combinations); k++) {
@@ -80,12 +83,13 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
         #pragma omp critical
         {
             if (finalResult == 0 && earlyExit != 0 && ((k-localStart + 1) % 100 == 0 || k == MIN(localStart + blockLen, combinations))) {
-                //check if we found valid inputs, if so exit early
+                //peroidically check if we found valid inputs, if so exit early
                 MPI_Allreduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
                 if (finalResult != 0) {
                     if (rank == 0) { 
                         printf("Found a solution, performing early exit\n");
                     }
+                    // OpenMP early exit
                     #pragma omp cancel for
                 }
             }
@@ -93,6 +97,7 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
     }
     fclose(fptr);
     if (earlyExit == 0) {
+        // we only need to do MPI_Reduce if we are not in early exit mode
         MPI_Reduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     }
     if (rank == 0) {
@@ -110,6 +115,7 @@ void combineOutputFiles(int rank, int p) {
             return; 
         }
 
+        //combin the partial files into a single output file
         for (i = 0; i < p; i++) {
             char filename[50] = "circuitoutput_";
             snprintf(filename, sizeof filename, "circuitoutput_%d.txt", i);
@@ -122,6 +128,7 @@ void combineOutputFiles(int rank, int p) {
                 fputc(c, fptr); 
             }
             fclose(fsubPtr);
+            //remove the partial file
             remove(filename);
         }
         fclose(fptr);
@@ -174,6 +181,8 @@ int main(int argc, char *argv[])
         expressionLength = strlen(buffer);
         fclose(circuitFile);
     }
+    
+    // make sure each process has the correct values
     MPI_Bcast(&INPUTS, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&combinations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&expressionLength, 1, MPI_INT, 0, MPI_COMM_WORLD);

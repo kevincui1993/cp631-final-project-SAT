@@ -1,5 +1,5 @@
 /*
-mpicc -O2 circuit_mpi.c -o circuit_mpi.x
+mpicc -O2 circuit_mpi.c logicalExpressionReader.c -lm -o circuit_mpi.x
 mpirun -np 4 ./circuit_mpi.x 1 (with early exit)
 mpirun -np 4 ./circuit_mpi.x 0 (without early exit)
 */
@@ -43,7 +43,8 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
     int isSatisfied = 0;
     int finalResult = 0;
 
-    if (rank == 0) {
+    if (rank == 0) { 
+        // process 0 distributes a offset to each process so they can work on their own interval
         for (dest = 1; dest < p; dest++) {
             MPI_Request req;
             MPI_Isend(&i, 1, MPI_INT, dest, 0, MPI_COMM_WORLD, &req);
@@ -54,7 +55,7 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
         MPI_Recv(&localStart, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
     }
 
-    //open file output.txt in write mode
+    // open file output.txt in write mode
     char filename[50] = "";
     snprintf(filename, sizeof filename, "circuitoutput_%d.txt", rank);
     FILE *fptr = fopen(filename, "w"); 
@@ -63,8 +64,10 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
         return; 
     }
     int k;
+    // each process work on their own interval and also make sure they stay in the bound
     for (k = localStart ; k <= MIN(localStart + blockLen, combinations); k++) {
         decToBinary(k,binValue);
+        // The approach of writing a separate file helps obtain a deterministic output in the end
         if (validateCircuit(binValue, expression, expressionLength) == 1) {
             for (j = 0; j < INPUTS; j++)
                 fprintf(fptr, "%d", binValue[j]);
@@ -73,7 +76,7 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
         }
 
         if (earlyExit != 0 && ((k-localStart + 1) % 100 == 0 || k == MIN(localStart + blockLen, combinations))) {
-            //check if we found valid inputs, if so exit early
+            //peroidically check if we found valid inputs, if so exit early
             MPI_Allreduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
             if (finalResult != 0) {
                 if (rank == 0) { 
@@ -85,6 +88,7 @@ void isCircuitSatisfied(int rank, int p, int combinations, int earlyExit, char* 
     }
     fclose(fptr);
     if (earlyExit == 0) {
+        // we only need to do MPI_Reduce if we are not in early exit mode
         MPI_Reduce(&isSatisfied, &finalResult, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     }
     if (rank == 0) {
@@ -102,6 +106,7 @@ void combineOutputFiles(int rank, int p) {
             return; 
         }
 
+        //combin the partial files into a single output file
         for (i = 0; i < p; i++) {
             char filename[50] = "circuitoutput_";
             snprintf(filename, sizeof filename, "circuitoutput_%d.txt", i);
@@ -114,6 +119,7 @@ void combineOutputFiles(int rank, int p) {
                 fputc(c, fptr); 
             }
             fclose(fsubPtr);
+            //remove the partial file
             remove(filename);
         }
         fclose(fptr);
@@ -166,6 +172,8 @@ int main(int argc, char *argv[])
         expressionLength = strlen(buffer);
         fclose(circuitFile);
     }
+
+    // make sure each process has the correct values
     MPI_Bcast(&INPUTS, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&combinations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&expressionLength, 1, MPI_INT, 0, MPI_COMM_WORLD);
